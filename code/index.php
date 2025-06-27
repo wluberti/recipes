@@ -52,6 +52,13 @@ function fetchAndParseRecipe($url, $debug) {
             });
         }
 
+        $originalLanguage = 'en'; // Default to English
+        if (strpos($url, '.nl') !== false || strpos($url, 'dutch') !== false) {
+            $originalLanguage = 'nl';
+        }
+
+        $originalUnitSystem = 'metric'; // Default to metric
+
         // Try to extract JSON-LD recipe data
         $jsonLdData = [];
         $crawler->filter('script[type="application/ld+json"]')->each(function (Crawler $node) use (&$jsonLdData) {
@@ -81,6 +88,14 @@ function fetchAndParseRecipe($url, $debug) {
                         }
                         $ingredients = $graphItem['recipeIngredient'] ?? [];
 
+                        // Determine original unit system based on ingredients
+                        foreach ($ingredients as $ingredient) {
+                            if (preg_match('/(cup|ounce|pound|tsp|tbsp)/i', $ingredient)) {
+                                $originalUnitSystem = 'imperial';
+                                break;
+                            }
+                        }
+
                         if ($recipeName && $servings && !empty($ingredients)) {
                             $recipeText = "Recipe Name: " . $recipeName . "\n";
                             $recipeText .= "Servings: " . $servings . "\n";
@@ -88,7 +103,7 @@ function fetchAndParseRecipe($url, $debug) {
                             foreach ($ingredients as $ingredient) {
                                 $recipeText .= "- " . $ingredient . "\n";
                             }
-                            return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl];
+                            return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl, 'originalLanguage' => $originalLanguage, 'originalUnitSystem' => $originalUnitSystem];
                         }
                     }
                 }
@@ -109,6 +124,14 @@ function fetchAndParseRecipe($url, $debug) {
                 }
                 $ingredients = $data['recipeIngredient'] ?? [];
 
+                // Determine original unit system based on ingredients
+                foreach ($ingredients as $ingredient) {
+                    if (preg_match('/(cup|ounce|pound|tsp|tbsp)/i', $ingredient)) {
+                        $originalUnitSystem = 'imperial';
+                        break;
+                    }
+                }
+
                 if ($recipeName && $servings && !empty($ingredients)) {
                     $recipeText = "Recipe Name: " . $recipeName . "\n";
                     $recipeText .= "Servings: " . $servings . "\n";
@@ -116,13 +139,13 @@ function fetchAndParseRecipe($url, $debug) {
                     foreach ($ingredients as $ingredient) {
                         $recipeText .= "- " . $ingredient . "\n";
                     }
-                    return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl];
+                    return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl, 'originalLanguage' => $originalLanguage, 'originalUnitSystem' => $originalUnitSystem];
                 }
             }
         }
 
         // Fallback: Extract visible text content if no structured data is found
-        return ['recipeText' => $crawler->filter('body')->text(), 'imageUrl' => $imageUrl];
+        return ['recipeText' => $crawler->filter('body')->text(), 'imageUrl' => $imageUrl, 'originalLanguage' => $originalLanguage, 'originalUnitSystem' => $originalUnitSystem];
 
     } catch (Exception $e) {
         if ($debug) error_log("Error fetching or parsing URL: " . $e->getMessage());
@@ -165,7 +188,7 @@ function interpretRecipeWithOpenAI($recipeText, $openAIClient, $debug) {
 }
 
 // Function to save recipe to database
-function saveRecipeToDatabase($pdo, $recipeData, $url, $debug) {
+function saveRecipeToDatabase($pdo, $recipeData, $url, $originalLanguage, $originalUnitSystem, $debug) {
     try {
         $pdo->beginTransaction();
 
@@ -195,8 +218,8 @@ function saveRecipeToDatabase($pdo, $recipeData, $url, $debug) {
             // Update existing recipe
             $recipeId = $existingRecipe['id'];
             if ($debug) error_log("Updating recipe ID: " . $recipeId . ", Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
-            $stmt = $pdo->prepare("UPDATE recipes SET name = ?, servings = ?, steps = ?, image_url = ? WHERE id = ?");
-            $stmt->execute([$recipeData['name'], $recipeData['servings'], json_encode($recipeData['steps']), $localImagePath, $recipeId]);
+            $stmt = $pdo->prepare("UPDATE recipes SET name = ?, servings = ?, steps = ?, image_url = ?, original_language = ?, original_unit_system = ? WHERE id = ?");
+            $stmt->execute([$recipeData['name'], $recipeData['servings'], json_encode($recipeData['steps']), $localImagePath, $originalLanguage, $originalUnitSystem, $recipeId]);
 
             // Delete old ingredients and insert new ones
             $stmt = $pdo->prepare("DELETE FROM ingredients WHERE recipe_id = ?");
@@ -204,8 +227,8 @@ function saveRecipeToDatabase($pdo, $recipeData, $url, $debug) {
         } else {
             // Insert new recipe
             if ($debug) error_log("Inserting new recipe. Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
-            $stmt = $pdo->prepare("INSERT INTO recipes (url, name, servings, steps, image_url) VALUES (?, ?, ?, ?, ?)");
-            $stmt->execute([$url, $recipeData['name'], $recipeData['servings'], json_encode($recipeData['steps']), $localImagePath]);
+            $stmt = $pdo->prepare("INSERT INTO recipes (url, name, servings, steps, image_url, original_language, original_unit_system) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$url, $recipeData['name'], $recipeData['servings'], json_encode($recipeData['steps']), $localImagePath, $originalLanguage, $originalUnitSystem]);
             $recipeId = $pdo->lastInsertId();
         }
 
@@ -244,7 +267,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["recipe_url"])) {
                     $recipeData['image_url'] = $extractedImageUrl;
                 }
 
-                if (saveRecipeToDatabase($pdo, $recipeData, $recipeUrl, $debug)) {
+                if (saveRecipeToDatabase($pdo, $recipeData, $recipeUrl, $parsedRecipe['originalLanguage'], $parsedRecipe['originalUnitSystem'], $debug)) {
                     echo "<p>Recipe processed and saved successfully!</p>";
                 } else {
                     echo "<p>Error saving recipe to database.</p>";

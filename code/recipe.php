@@ -108,7 +108,7 @@ $displayUnitSystem = null;
 if (isset($_GET['id'])) {
     $recipeId = (int)$_GET['id'];
 
-    $stmt = $pdo->prepare("SELECT id, url, name, servings, steps, image_url FROM recipes WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, url, name, servings, steps, image_url, original_language, original_unit_system FROM recipes WHERE id = ?");
     $stmt->execute([$recipeId]);
     $recipe = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -122,7 +122,7 @@ if (isset($_GET['id'])) {
 
         if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $displayServings = isset($_POST["servings"]) ? (int)$_POST["servings"] : $recipe['servings'];
-            $displayUnitSystem = isset($_POST["unit_system"]) ? $_POST["unit_system"] : 'original';
+            $displayUnitSystem = isset($_POST["unit_system"]) ? $_POST["unit_system"] : 'metric';
         }
     }
 }
@@ -145,6 +145,9 @@ if (isset($_GET['id'])) {
         .unit-buttons { display: flex; gap: 5px; margin-left: 10px; }
         .unit-button { background-color: #e9ecef; color: #333; border: 1px solid #ddd; }
         .unit-button.active { background-color: #007bff; color: white; border-color: #007bff; }
+        .language-buttons { display: flex; gap: 5px; margin-bottom: 10px; }
+        .language-button { padding: 8px 15px; background-color: #e9ecef; color: #333; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; }
+        .language-button.active { background-color: #28a745; color: white; border-color: #28a745; }
         ul { list-style: none; padding: 0; }
         li { margin-bottom: 5px; }
         .back-link { display: block; margin-top: 20px; color: #007bff; text-decoration: none; }
@@ -207,6 +210,19 @@ if (isset($_GET['id'])) {
             // Store original ingredients data from PHP for calculations
             const originalIngredients = <?php echo json_encode($ingredients); ?>;
             const originalServings = <?php echo json_encode($recipe['servings']); ?>;
+            const originalLanguage = <?php echo json_encode($recipe['original_language']); ?>;
+            const originalUnitSystem = <?php echo json_encode($recipe['original_unit_system']); ?>;
+
+            // Set initial unit system based on original language or stored preference
+            let currentUnitSystem = unitSystemInput.value; // Get current value from hidden input
+            if (currentUnitSystem === 'original') { // If it's still 'original', set based on language
+                if (originalLanguage === 'nl') {
+                    currentUnitSystem = 'metric';
+                } else {
+                    currentUnitSystem = 'imperial';
+                }
+                unitSystemInput.value = currentUnitSystem;
+            }
 
             function updateIngredients() {
                 const currentServings = parseFloat(servingsInput.value);
@@ -283,6 +299,35 @@ if (isset($_GET['id'])) {
                     unitButtons.forEach(btn => btn.classList.remove('active'));
                     this.classList.add('active');
                     unitSystemInput.value = this.dataset.unit;
+                    updateIngredients();
+                });
+            });
+
+            const languageButtons = document.querySelectorAll('.language-button');
+            const displayLanguageInput = document.getElementById('display_language');
+
+            languageButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    languageButtons.forEach(btn => btn.classList.remove('active'));
+                    this.classList.add('active');
+                    displayLanguageInput.value = this.dataset.lang;
+
+                    // Set unit system based on selected language
+                    if (this.dataset.lang === 'nl') {
+                        unitSystemInput.value = 'metric';
+                    } else if (this.dataset.lang === 'en') {
+                        unitSystemInput.value = 'imperial';
+                    } else {
+                        unitSystemInput.value = originalUnitSystem; // Fallback to original if neither NL nor EN
+                    }
+                    // Update active unit button
+                    unitButtons.forEach(btn => {
+                        if (btn.dataset.unit === unitSystemInput.value) {
+                            btn.classList.add('active');
+                        } else {
+                            btn.classList.remove('active');
+                        }
+                    });
                     updateIngredients();
                 });
             });

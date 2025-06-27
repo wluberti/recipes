@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS recipes (
     servings INT NOT NULL,
     steps JSON,
     image_url VARCHAR(255),
+    original_language VARCHAR(10) DEFAULT 'en',
+    original_unit_system VARCHAR(10) DEFAULT 'metric',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
