@@ -12,6 +12,7 @@ $dbName = $_ENV['DB_NAME'];
 $dbUser = $_ENV['DB_USER'];
 $dbPass = $_ENV['DB_PASS'];
 $openaiApiKey = $_ENV['OPENAI_API_KEY'];
+$debug = isset($_ENV['DEBUG']) && $_ENV['DEBUG'] === 'true';
 
 // Database connection
 try {
@@ -26,11 +27,30 @@ $openAIClient = \OpenAI::client($openaiApiKey);
 
 
 // Function to fetch and parse recipe from URL
-function fetchAndParseRecipe($url) {
+function fetchAndParseRecipe($url, $debug) {
     try {
         $browser = new HttpBrowser(HttpClient::create());
         $crawler = $browser->request('GET', $url);
         $htmlContent = $crawler->html();
+
+        $imageUrl = null;
+        // Try to extract Open Graph image
+        $crawler->filter('meta[property="og:image"]')->each(function (Crawler $node) use (&$imageUrl) {
+            $imageUrl = $node->attr('content');
+        });
+
+        // If no Open Graph image, try to find a prominent image in the body
+        if (!$imageUrl) {
+            $crawler->filter('img')->each(function (Crawler $node) use (&$imageUrl) {
+                // Basic heuristic: prefer larger images or images within main content
+                $src = $node->attr('src');
+                if ($src && strpos($src, 'http') === 0) { // Ensure it's an absolute URL
+                    // You might add more sophisticated logic here, e.g., check image dimensions
+                    $imageUrl = $src;
+                    return false; // Stop after finding the first suitable image
+                }
+            });
+        }
 
         // Try to extract JSON-LD recipe data
         $jsonLdData = [];
@@ -68,7 +88,7 @@ function fetchAndParseRecipe($url) {
                             foreach ($ingredients as $ingredient) {
                                 $recipeText .= "- " . $ingredient . "\n";
                             }
-                            return $recipeText;
+                            return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl];
                         }
                     }
                 }
@@ -96,39 +116,39 @@ function fetchAndParseRecipe($url) {
                     foreach ($ingredients as $ingredient) {
                         $recipeText .= "- " . $ingredient . "\n";
                     }
-                    return $recipeText;
+                    return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl];
                 }
             }
         }
 
         // Fallback: Extract visible text content if no structured data is found
-        return $crawler->filter('body')->text();
+        return ['recipeText' => $crawler->filter('body')->text(), 'imageUrl' => $imageUrl];
 
     } catch (Exception $e) {
-        error_log("Error fetching or parsing URL: " . $e->getMessage());
+        if ($debug) error_log("Error fetching or parsing URL: " . $e->getMessage());
         return null;
     }
 }
 
 // Function to interpret recipe with OpenAI
-function interpretRecipeWithOpenAI($recipeText, $openAIClient) {
+function interpretRecipeWithOpenAI($recipeText, $openAIClient, $debug) {
     try {
         $response = $openAIClient->chat()->create([
             'model' => 'gpt-3.5-turbo',
             'messages' => [
-                ['role' => 'system', 'content' => 'You are a helpful assistant that extracts recipe information. Extract the recipe name, servings, and a list of ingredients with quantity and unit. For each ingredient, provide the quantity as a number (decimal if necessary) and the unit as a string (e.g., "grams", "cups", "teaspoons", "ml", "pieces"). If a unit is not explicitly stated, infer the most common unit for that ingredient. If a quantity is not specified, infer a reasonable amount (e.g., 1 for a pinch of salt). Format the output as a JSON object with the following keys: "name" (string), "servings" (integer), "ingredients" (an array of objects, each with "name" (string), "quantity" (float), "unit" (string)).'],
+                ['role' => 'system', 'content' => 'You are a helpful assistant that extracts recipe information. Extract the recipe name, servings, a list of ingredients with quantity and unit, the cooking steps with timings, and the *actual* URL for an image of the dish from the provided text. For each ingredient, provide the quantity as a number (decimal if necessary) and the unit as a string (e.g., "grams", "cups", "teaspoons", "ml", "pieces"). If a unit is not explicitly stated, infer the most common unit for that ingredient. If a quantity is not specified, infer a reasonable amount (e.g., 1 for a pinch of salt). For each cooking step, provide a description and an estimated time in minutes. Format the output as a JSON object with the following keys: "name" (string), "servings" (integer), "ingredients" (an array of objects, each with "name" (string), "quantity" (float), "unit" (string)), "steps" (an array of objects, each with "description" (string) and "time" (integer)), and "image_url" (string). If no image URL is found, return an empty string for "image_url".'],
                 ['role' => 'user', 'content' => $recipeText,],
             ],
         ])->choices[0]->message->content;
 
-        error_log("Raw OpenAI response: " . $response);
+        if ($debug) error_log("Raw OpenAI response: " . $response);
         $decodedResponse = json_decode($response, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            error_log("JSON decoding error: " . json_last_error_msg());
-            error_log("Raw OpenAI response (after json_decode failure): " . $response);
+            if ($debug) error_log("JSON decoding error: " . json_last_error_msg());
+            if ($debug) error_log("Raw OpenAI response (after json_decode failure): " . $response);
             return null;
         }
-        error_log("Decoded OpenAI response: " . print_r($decodedResponse, true));
+        if ($debug) error_log("Decoded OpenAI response: " . print_r($decodedResponse, true));
 
         // Validate the structure of the decoded response
         if (!isset($decodedResponse['name']) || !isset($decodedResponse['servings']) || !isset($decodedResponse['ingredients']) || !is_array($decodedResponse['ingredients'])) {
@@ -139,15 +159,32 @@ function interpretRecipeWithOpenAI($recipeText, $openAIClient) {
         return $decodedResponse;
 
     } catch (Exception $e) {
-        error_log("OpenAI API error: " . $e->getMessage());
+        if ($debug) error_log("OpenAI API error: " . $e->getMessage());
         return null;
     }
 }
 
 // Function to save recipe to database
-function saveRecipeToDatabase($pdo, $recipeData, $url) {
+function saveRecipeToDatabase($pdo, $recipeData, $url, $debug) {
     try {
         $pdo->beginTransaction();
+
+        // Download image and save locally
+        $localImagePath = null;
+        if (!empty($recipeData['image_url']) && filter_var($recipeData['image_url'], FILTER_VALIDATE_URL)) {
+            $imageUrl = $recipeData['image_url'];
+            $imageContents = @file_get_contents($imageUrl);
+            if ($imageContents !== false) {
+                $imageName = basename(parse_url($imageUrl, PHP_URL_PATH));
+                if (empty($imageName) || !preg_match('/\.(jpg|jpeg|png|gif)$/i', $imageName)) {
+                    $imageName = uniqid() . '.jpg'; // Fallback to a unique name if no valid extension
+                }
+                $localImagePath = 'images/' . $imageName;
+                file_put_contents(__DIR__ . '/' . $localImagePath, $imageContents);
+            } else {
+                if ($debug) error_log("Failed to download image from: " . $imageUrl);
+            }
+        }
 
         // Check if recipe already exists
         $stmt = $pdo->prepare("SELECT id FROM recipes WHERE url = ?");
@@ -157,18 +194,18 @@ function saveRecipeToDatabase($pdo, $recipeData, $url) {
         if ($existingRecipe) {
             // Update existing recipe
             $recipeId = $existingRecipe['id'];
-            error_log("Updating recipe ID: " . $recipeId . ", Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
-            $stmt = $pdo->prepare("UPDATE recipes SET name = ?, servings = ? WHERE id = ?");
-            $stmt->execute([$recipeData['name'], $recipeData['servings'], $recipeId]);
+            if ($debug) error_log("Updating recipe ID: " . $recipeId . ", Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
+            $stmt = $pdo->prepare("UPDATE recipes SET name = ?, servings = ?, steps = ?, image_url = ? WHERE id = ?");
+            $stmt->execute([$recipeData['name'], $recipeData['servings'], json_encode($recipeData['steps']), $localImagePath, $recipeId]);
 
             // Delete old ingredients and insert new ones
             $stmt = $pdo->prepare("DELETE FROM ingredients WHERE recipe_id = ?");
             $stmt->execute([$recipeId]);
         } else {
             // Insert new recipe
-            error_log("Inserting new recipe. Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
-            $stmt = $pdo->prepare("INSERT INTO recipes (url, name, servings) VALUES (?, ?, ?)");
-            $stmt->execute([$url, $recipeData['name'], $recipeData['servings']]);
+            if ($debug) error_log("Inserting new recipe. Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
+            $stmt = $pdo->prepare("INSERT INTO recipes (url, name, servings, steps, image_url) VALUES (?, ?, ?, ?, ?)");
+            $stmt->execute([$url, $recipeData['name'], $recipeData['servings'], json_encode($recipeData['steps']), $localImagePath]);
             $recipeId = $pdo->lastInsertId();
         }
 
@@ -189,18 +226,25 @@ function saveRecipeToDatabase($pdo, $recipeData, $url) {
 
 // Handle form submission for recipe processing
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["recipe_url"])) {
-    error_log("POST request received for recipe URL: " . $_POST["recipe_url"]);
+    if ($debug) error_log("POST request received for recipe URL: " . $_POST["recipe_url"]);
     $recipeUrl = $_POST["recipe_url"];
 
     // Validate the URL
     if (filter_var($recipeUrl, FILTER_VALIDATE_URL)) {
-        $recipeText = fetchAndParseRecipe($recipeUrl);
-        if ($recipeText) {
-            error_log("Recipe Text sent to OpenAI: " . $recipeText);
-            $recipeData = interpretRecipeWithOpenAI($recipeText, $openAIClient);
+        $parsedRecipe = fetchAndParseRecipe($recipeUrl, $debug);
+        if ($parsedRecipe) {
+            $recipeText = $parsedRecipe['recipeText'];
+            $extractedImageUrl = $parsedRecipe['imageUrl'];
+            if ($debug) error_log("Recipe Text sent to OpenAI: " . $recipeText);
+            $recipeData = interpretRecipeWithOpenAI($recipeText, $openAIClient, $debug);
 
             if ($recipeData) {
-                if (saveRecipeToDatabase($pdo, $recipeData, $recipeUrl)) {
+                // Override OpenAI's image_url with the directly extracted one if available
+                if (!empty($extractedImageUrl)) {
+                    $recipeData['image_url'] = $extractedImageUrl;
+                }
+
+                if (saveRecipeToDatabase($pdo, $recipeData, $recipeUrl, $debug)) {
                     echo "<p>Recipe processed and saved successfully!</p>";
                 } else {
                     echo "<p>Error saving recipe to database.</p>";

@@ -1,8 +1,10 @@
 CREATE TABLE IF NOT EXISTS recipes (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    url VARCHAR(255) UNIQUE NOT NULL,
-    name VARCHAR(255),
-    servings INT,
+    url VARCHAR(255) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    servings INT NOT NULL,
+    steps JSON,
+    image_url VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
