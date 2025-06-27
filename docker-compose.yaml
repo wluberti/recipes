@@ -1,0 +1,46 @@
+services:
+  php:
+    image: zenith/php8composer
+    container_name: recipe_php
+    volumes:
+      - ./code:/code
+    working_dir: /code
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TZ=Europe/Amsterdam
+
+  nginx:
+    image: nginx:latest
+    container_name: recipe_web
+    ports:
+      - 8080:80
+    volumes:
+      - ./default.conf:/etc/nginx/conf.d/default.conf
+      - ./code:/code
+
+  db:
+    image: mariadb
+    container_name: recipe_db
+    environment:
+      - MYSQL_ROOT_PASSWORD=root${DB_PASS}
+      - MYSQL_DATABASE=${DB_NAME}
+      - MYSQL_USER=${DB_USER}
+      - MYSQL_PASSWORD=${DB_PASS}
+    volumes:
+      - ./db_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  adminer:
+    image: adminer
+    container_name: recipe_adminer
+    ports:
+      - "8081:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=db
+      - ADMINER_USERNAME=${DB_USER}
+      - ADMINER_PASSWORD=${DB_PASS}
+      - ADMINER_DB=${DB_NAME}
