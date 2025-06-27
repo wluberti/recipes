@@ -15,8 +15,3 @@ CREATE TABLE IF NOT EXISTS ingredients (
     original_unit VARCHAR(50), -- Added for storing the original unit
     FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
 );
-
--- Example data (optional, for testing)
--- INSERT INTO recipes (url, name, servings) VALUES ('https://example.com/recipe', 'Test Recipe', 4);
--- INSERT INTO ingredients (recipe_id, name, quantity, unit) VALUES (1, 'Flour', 250, 'grams');
--- INSERT INTO ingredients (recipe_id, name, quantity, unit) VALUES (1, 'Sugar', 100, 'grams');
