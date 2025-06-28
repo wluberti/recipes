@@ -2,21 +2,22 @@
 
 require 'vendor/autoload.php';
 
+// Load environment variables from .env file
+$dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
+$dotenv->load();
+
 use OpenAI\OpenAI;
 use Symfony\Component\BrowserKit\HttpBrowser;
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Component\DomCrawler\Crawler;
 
-$dbHost = $_ENV['DB_HOST'];
-$dbName = $_ENV['DB_NAME'];
-$dbUser = $_ENV['DB_USER'];
-$dbPass = $_ENV['DB_PASS'];
+$dbFile = $_ENV['DB_FILE'];
 $openaiApiKey = $_ENV['OPENAI_API_KEY'];
 $debug = isset($_ENV['DEBUG']) && $_ENV['DEBUG'] === 'true';
 
 // Database connection
 try {
-    $pdo = new PDO("mysql:host=$dbHost;dbname=$dbName", $dbUser, $dbPass);
+    $pdo = new PDO("sqlite:$dbFile");
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
     die("Could not connect to the database: " . $e->getMessage());
@@ -157,6 +158,7 @@ function fetchAndParseRecipe($url, $debug) {
 function interpretRecipeWithOpenAI($recipeText, $openAIClient, $debug) {
     try {
         $response = $openAIClient->chat()->create([
+            // 'model' => 'gpt-4',
             'model' => 'gpt-3.5-turbo',
             'messages' => [
                 ['role' => 'system', 'content' => 'You are a helpful assistant that extracts recipe information. Extract the recipe name, servings, a list of ingredients with quantity and unit, the cooking steps with timings, and the *actual* URL for an image of the dish from the provided text. For each ingredient, provide the quantity as a number (decimal if necessary) and the unit as a string (e.g., "grams", "cups", "teaspoons", "ml", "pieces"). If a unit is not explicitly stated, infer the most common unit for that ingredient. If a quantity is not specified, infer a reasonable amount (e.g., 1 for a pinch of salt). For each cooking step, provide a description and an estimated time in minutes. Format the output as a JSON object with the following keys: "name" (string), "servings" (integer), "ingredients" (an array of objects, each with "name" (string), "quantity" (float), "unit" (string)), "steps" (an array of objects, each with "description" (string) and "time" (integer)), and "image_url" (string). If no image URL is found, return an empty string for "image_url".'],
@@ -218,24 +220,32 @@ function saveRecipeToDatabase($pdo, $recipeData, $url, $originalLanguage, $origi
             // Update existing recipe
             $recipeId = $existingRecipe['id'];
             if ($debug) error_log("Updating recipe ID: " . $recipeId . ", Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
-            $stmt = $pdo->prepare("UPDATE recipes SET name = ?, servings = ?, steps = ?, image_url = ?, original_language = ?, original_unit_system = ? WHERE id = ?");
-            $stmt->execute([$recipeData['name'], $recipeData['servings'], json_encode($recipeData['steps']), $localImagePath, $originalLanguage, $originalUnitSystem, $recipeId]);
+            $stmt = $pdo->prepare("UPDATE recipes SET name = ?, servings = ?, image_url = ?, original_language = ?, original_unit_system = ? WHERE id = ?");
+            $stmt->execute([$recipeData['name'], $recipeData['servings'], $localImagePath, $originalLanguage, $originalUnitSystem, $recipeId]);
 
             // Delete old ingredients and insert new ones
             $stmt = $pdo->prepare("DELETE FROM ingredients WHERE recipe_id = ?");
             $stmt->execute([$recipeId]);
+            $stmt = $pdo->prepare("DELETE FROM steps WHERE recipe_id = ?");
+            $stmt->execute([$recipeId]);
         } else {
             // Insert new recipe
             if ($debug) error_log("Inserting new recipe. Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
-            $stmt = $pdo->prepare("INSERT INTO recipes (url, name, servings, steps, image_url, original_language, original_unit_system) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$url, $recipeData['name'], $recipeData['servings'], json_encode($recipeData['steps']), $localImagePath, $originalLanguage, $originalUnitSystem]);
+            $stmt = $pdo->prepare("INSERT INTO recipes (url, name, servings, image_url, original_language, original_unit_system) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$url, $recipeData['name'], $recipeData['servings'], $localImagePath, $originalLanguage, $originalUnitSystem]);
             $recipeId = $pdo->lastInsertId();
         }
 
         // Insert ingredients
-        $stmt = $pdo->prepare("INSERT INTO ingredients (recipe_id, name, quantity, unit, original_unit) VALUES (?, ?, ?, ?, ?)");
+        $stmt = $pdo->prepare("INSERT INTO ingredients (recipe_id, language, name, quantity, unit, original_unit) VALUES (?, ?, ?, ?, ?, ?)");
         foreach ($recipeData['ingredients'] as $ingredient) {
-            $stmt->execute([$recipeId, $ingredient['name'], $ingredient['quantity'], $ingredient['unit'], $ingredient['unit']]);
+            $stmt->execute([$recipeId, $originalLanguage, $ingredient['name'], $ingredient['quantity'], $ingredient['unit'], $ingredient['unit']]);
+        }
+
+        // Insert steps
+        $stmt = $pdo->prepare("INSERT INTO steps (recipe_id, language, description, time_in_minutes) VALUES (?, ?, ?, ?)");
+        foreach ($recipeData['steps'] as $step) {
+            $stmt->execute([$recipeId, $originalLanguage, $step['description'], $step['time']]);
         }
 
         $pdo->commit();
@@ -299,24 +309,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["recipe_id"])) {
 <html>
 <head>
     <title>Recipe Processor</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; }
-        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        h1, h2 { color: #333; }
-        form { margin-bottom: 20px; display: flex; flex-wrap: wrap; align-items: center; }
-        form label { margin-right: 10px; }
-        input[type="url"], input[type="number"], select { flex-grow: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-right: 10px; margin-bottom: 10px; }
-        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 10px; }
-        button:hover { background-color: #0056b3; }
-        .recipe-list { margin-top: 30px; }
-        .recipe-item { background-color: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 10px; }
-        .recipe-item h3 { margin-top: 0; color: #0056b3; }
-        ul { list-style: none; padding: 0; }
-        li { margin-bottom: 5px; }
-        .controls { display: flex; align-items: center; margin-top: 10px; }
-        .controls label { margin-right: 5px; }
-        .controls input, .controls select { margin-right: 10px; }
-    </style>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">

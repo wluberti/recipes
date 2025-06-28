@@ -46,6 +46,11 @@ To get the application up and running, follow these steps:
     ```
     **Important:** Replace `your_openai_api_key_here` with your actual OpenAI API key. Ensure your OpenAI account has sufficient quota and permissions for `gpt-3.5-turbo` model requests.
 
+    ℹ ⚡ Slow response times detected. Automatically switching from gemini-2.5-pro to gemini-2.5-flash for faster responses for the remainder of
+  this session.
+  ⚡ To avoid this you can utilize a Gemini API Key. See: https://goo.gle/gemini-cli-docs-auth#gemini-api-key
+  ⚡ You can switch authentication methods by typing /auth
+
 3.  **Build and Run Docker Containers:**
     Navigate to the project root directory (where `docker-compose.yaml` is located) and run:
     ```bash

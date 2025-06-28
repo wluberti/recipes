@@ -1,3 +1,4 @@
-db_data
+database
 code/vendor
 code/images
+!code/images/.gitkeep
