@@ -49,13 +49,6 @@ function fetchAndParseRecipe($url, $debug) {
             });
         }
 
-        $originalLanguage = 'en'; // Default to English
-        if (strpos($url, '.nl') !== false || strpos($url, 'dutch') !== false) {
-            $originalLanguage = 'nl';
-        }
-
-        $originalUnitSystem = 'metric'; // Default to metric
-
         // Try to extract JSON-LD recipe data
         $jsonLdData = [];
         $crawler->filter('script[type="application/ld+json"]')->each(function (Crawler $node) use (&$jsonLdData) {
@@ -85,14 +78,6 @@ function fetchAndParseRecipe($url, $debug) {
                         }
                         $ingredients = $graphItem['recipeIngredient'] ?? [];
 
-                        // Determine original unit system based on ingredients
-                        foreach ($ingredients as $ingredient) {
-                            if (preg_match('/(cup|ounce|pound|tsp|tbsp)/i', $ingredient)) {
-                                $originalUnitSystem = 'imperial';
-                                break;
-                            }
-                        }
-
                         if ($recipeName && $servings && !empty($ingredients)) {
                             $recipeText = "Recipe Name: " . $recipeName . "\n";
                             $recipeText .= "Servings: " . $servings . "\n";
@@ -100,7 +85,7 @@ function fetchAndParseRecipe($url, $debug) {
                             foreach ($ingredients as $ingredient) {
                                 $recipeText .= "- " . $ingredient . "\n";
                             }
-                            return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl, 'originalLanguage' => $originalLanguage, 'originalUnitSystem' => $originalUnitSystem];
+                            return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl];
                         }
                     }
                 }
@@ -121,14 +106,6 @@ function fetchAndParseRecipe($url, $debug) {
                 }
                 $ingredients = $data['recipeIngredient'] ?? [];
 
-                // Determine original unit system based on ingredients
-                foreach ($ingredients as $ingredient) {
-                    if (preg_match('/(cup|ounce|pound|tsp|tbsp)/i', $ingredient)) {
-                        $originalUnitSystem = 'imperial';
-                        break;
-                    }
-                }
-
                 if ($recipeName && $servings && !empty($ingredients)) {
                     $recipeText = "Recipe Name: " . $recipeName . "\n";
                     $recipeText .= "Servings: " . $servings . "\n";
@@ -136,13 +113,13 @@ function fetchAndParseRecipe($url, $debug) {
                     foreach ($ingredients as $ingredient) {
                         $recipeText .= "- " . $ingredient . "\n";
                     }
-                    return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl, 'originalLanguage' => $originalLanguage, 'originalUnitSystem' => $originalUnitSystem];
+                    return ['recipeText' => $recipeText, 'imageUrl' => $imageUrl];
                 }
             }
         }
 
         // Fallback: Extract visible text content if no structured data is found
-        return ['recipeText' => $crawler->filter('body')->text(), 'imageUrl' => $imageUrl, 'originalLanguage' => $originalLanguage, 'originalUnitSystem' => $originalUnitSystem];
+        return ['recipeText' => $crawler->filter('body')->text(), 'imageUrl' => $imageUrl];
 
     } catch (Exception $e) {
         if ($debug) error_log("Error fetching or parsing URL: " . $e->getMessage());

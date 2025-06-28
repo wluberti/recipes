@@ -121,7 +121,7 @@ if (isset($_GET['id'])) {
         $ingredients = $stmtIngredients->fetchAll(PDO::FETCH_ASSOC);
 
         $displayServings = $recipe['servings'];
-        $displayUnitSystem = 'original';
+        $displayUnitSystem = 'metric'; // Default to metric for display
 
         if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $displayServings = isset($_POST["servings"]) ? (int)$_POST["servings"] : $recipe['servings'];
