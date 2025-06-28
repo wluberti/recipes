@@ -2,10 +2,6 @@
 
 require 'vendor/autoload.php';
 
-// Load environment variables from .env file
-$dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
-$dotenv->load();
-
 $dbFile = $_ENV['DB_FILE'];
 
 echo "Begin initializing Database... ($dbFile)" . PHP_EOL;

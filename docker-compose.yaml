@@ -7,7 +7,7 @@ services:
       - ./database:/database
       - ./entrypoint.sh:/entrypoint.sh
     working_dir: /code
-    env_file: ./code/.env
+    env_file: ./.env
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
 
   nginx:

@@ -2,10 +2,6 @@
 
 require 'vendor/autoload.php';
 
-// Load environment variables from .env file
-$dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
-$dotenv->load();
-
 $dbFile = $_ENV['DB_FILE'];
 $debug = isset($_ENV['DEBUG']) && $_ENV['DEBUG'] === 'true';
 
@@ -109,17 +105,19 @@ $displayUnitSystem = null;
 if (isset($_GET['id'])) {
     $recipeId = (int)$_GET['id'];
 
-    $stmt = $pdo->prepare("SELECT id, url, name, servings, total_time, image_url, original_language, original_unit_system FROM recipes WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, url, name_nl, name_en, servings, total_time, image_url FROM recipes WHERE id = ?");
     $stmt->execute([$recipeId]);
     $recipe = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($recipe) {
-        $stmtSteps = $pdo->prepare("SELECT description, time_in_minutes FROM steps WHERE recipe_id = ? AND language = ?");
-        $stmtSteps->execute([$recipeId, $recipe['original_language']]);
+        $displayLanguage = isset($_POST["display_language"]) ? $_POST["display_language"] : 'nl'; // Default to Dutch
+
+        $stmtSteps = $pdo->prepare("SELECT description_nl, description_en, time_in_minutes FROM steps WHERE recipe_id = ?");
+        $stmtSteps->execute([$recipeId]);
         $steps = $stmtSteps->fetchAll(PDO::FETCH_ASSOC);
 
-        $stmtIngredients = $pdo->prepare("SELECT name, quantity, unit, original_unit FROM ingredients WHERE recipe_id = ? AND language = ?");
-        $stmtIngredients->execute([$recipeId, $recipe['original_language']]);
+        $stmtIngredients = $pdo->prepare("SELECT name_nl, name_en, quantity, unit_nl, unit_en FROM ingredients WHERE recipe_id = ?");
+        $stmtIngredients->execute([$recipeId]);
         $ingredients = $stmtIngredients->fetchAll(PDO::FETCH_ASSOC);
 
         $displayServings = $recipe['servings'];
@@ -137,18 +135,22 @@ if (isset($_GET['id'])) {
 <!DOCTYPE html>
 <html>
 <head>
-    <title><?php echo htmlspecialchars($recipe['name'] ?? 'Recipe'); ?></title>
+    <title><?php echo htmlspecialchars($recipe['name_nl'] ?? 'Recipe'); ?></title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <?php if ($recipe): ?>
             <a href="index.php" class="back-link">Back to Recipe List</a>
-            <h1><?php echo htmlspecialchars($recipe['name'] ?? 'Unknown Recipe'); ?></h1>
+            <h1>
+                <span id="recipe-name-nl"><?php echo htmlspecialchars($recipe['name_nl'] ?? 'Unknown Recipe'); ?></span>
+                <span id="recipe-name-en" style="display:none;"><?php echo htmlspecialchars($recipe['name_en'] ?? 'Unknown Recipe'); ?></span>
+            </h1>
+
             <p>Original Recipe: <a href="<?php echo htmlspecialchars($recipe['url']); ?>" target="_blank"><?php echo htmlspecialchars($recipe['url']); ?></a></p>
 
             <?php if (!empty($recipe['image_url'])): ?>
-                <img src="<?php echo htmlspecialchars($recipe['image_url']); ?>" alt="<?php echo htmlspecialchars($recipe['name']); ?>" style="max-width: 100%; height: auto;">
+                <img src="<?php echo htmlspecialchars($recipe['image_url']); ?>" alt="<?php echo htmlspecialchars($recipe['name_nl']); ?>" style="max-width: 100%; height: auto;">
             <?php endif; ?>
 
             <form method="post" class="controls" id="recipe-controls-form">
@@ -156,24 +158,45 @@ if (isset($_GET['id'])) {
                 <input type="number" name="servings" id="servings" value="<?php echo htmlspecialchars($displayServings); ?>" min="1">
                 <div class="unit-buttons">
                     <input type="hidden" name="unit_system" id="unit_system" value="<?php echo htmlspecialchars($displayUnitSystem); ?>">
-                    <button type="button" class="unit-button <?php echo ($displayUnitSystem === 'original' ? 'active' : ''); ?>" data-unit="original">Original</button>
                     <button type="button" class="unit-button <?php echo ($displayUnitSystem === 'metric' ? 'active' : ''); ?>" data-unit="metric">Metric</button>
                     <button type="button" class="unit-button <?php echo ($displayUnitSystem === 'imperial' ? 'active' : ''); ?>" data-unit="imperial">Imperial</button>
+                </div>
+            </form>
+
+            <form method="post" class="controls" id="language-controls-form">
+                <input type="hidden" name="display_language" id="display_language" value="<?php echo htmlspecialchars($displayLanguage); ?>">
+                <div class="language-buttons">
+                    <button type="button" class="language-button <?php echo ($displayLanguage === 'nl' ? 'active' : ''); ?>" data-lang="nl">Dutch</button>
+                    <button type="button" class="language-button <?php echo ($displayLanguage === 'en' ? 'active' : ''); ?>" data-lang="en">English</button>
                 </div>
             </form>
 
             <h2 id="ingredients-list-heading">Ingredients:</h2>
             <ul id="ingredients-list">
                 <?php foreach ($ingredients as $ingredient): ?>
-                    <li><?php echo htmlspecialchars($ingredient['name']); ?> (<?php echo htmlspecialchars($ingredient['quantity']); ?> <?php echo htmlspecialchars($ingredient['unit']); ?>)</li>
+                    <li>
+                        <span class="ingredient-nl">
+                            <?php echo htmlspecialchars($ingredient['name_nl']); ?> (<?php echo htmlspecialchars($ingredient['quantity']); ?> <?php echo htmlspecialchars($ingredient['unit_nl']); ?>)
+                        </span>
+                        <span class="ingredient-en" style="display:none;">
+                            <?php echo htmlspecialchars($ingredient['name_en']); ?> (<?php echo htmlspecialchars($ingredient['quantity']); ?> <?php echo htmlspecialchars($ingredient['unit_en']); ?>)
+                        </span>
+                    </li>
                 <?php endforeach; ?>
             </ul>
 
             <?php if (!empty($steps)): ?>
                 <h2>Cooking Steps</h2>
-                <ol>
+                <ol id="steps-list">
                     <?php foreach ($steps as $step): ?>
-                        <li><?php echo htmlspecialchars($step['description']); ?> (<?php echo htmlspecialchars($step['time_in_minutes']); ?> minutes)</li>
+                        <li>
+                            <span class="step-nl">
+                                <?php echo htmlspecialchars($step['description_nl']); ?> (<?php echo htmlspecialchars($step['time_in_minutes']); ?> minutes)
+                            </span>
+                            <span class="step-en" style="display:none;">
+                                <?php echo htmlspecialchars($step['description_en']); ?> (<?php echo htmlspecialchars($step['time_in_minutes']); ?> minutes)
+                            </span>
+                        </li>
                     <?php endforeach; ?>
                 </ol>
             <?php endif; ?>
@@ -192,9 +215,8 @@ if (isset($_GET['id'])) {
     <script>
         const recipeData = {
             ingredients: <?php echo json_encode($ingredients); ?>,
-            servings: <?php echo json_encode($recipe['servings'] ?? 1); ?>,
-            original_language: <?php echo json_encode($recipe['original_language'] ?? 'en'); ?>,
-            original_unit_system: <?php echo json_encode($recipe['original_unit_system'] ?? 'metric'); ?>
+            steps: <?php echo json_encode($steps); ?>,
+            servings: <?php echo json_encode($recipe['servings'] ?? 1); ?>
         };
     </script>
     <script src="script.js"></script>

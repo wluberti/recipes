@@ -7,28 +7,24 @@ document.addEventListener('DOMContentLoaded', function() {
     // Store original ingredients data from PHP for calculations
     const originalIngredients = recipeData.ingredients;
     const originalServings = recipeData.servings;
-    const originalLanguage = recipeData.original_language;
-    const originalUnitSystem = recipeData.original_unit_system;
 
-    // Set initial unit system based on original language or stored preference
+    // Set initial unit system based on stored preference
     let currentUnitSystem = unitSystemInput.value; // Get current value from hidden input
-    if (currentUnitSystem === 'original') { // If it's still 'original', set based on language
-        if (originalLanguage === 'nl') {
-            currentUnitSystem = 'metric';
-        } else {
-            currentUnitSystem = 'imperial';
-        }
+    if (currentUnitSystem === 'original') { // If it's still 'original', set based on default to metric
+        currentUnitSystem = 'metric';
         unitSystemInput.value = currentUnitSystem;
     }
 
     function updateIngredients() {
         const currentServings = parseFloat(servingsInput.value);
         const currentUnitSystem = unitSystemInput.value;
+        const displayLanguage = displayLanguageInput.value;
 
         let updatedHtml = '';
         originalIngredients.forEach(ingredient => {
             let quantity = parseFloat(ingredient.quantity); // Ensure quantity is a number
-            let unit = ingredient.unit;
+            let unit = (displayLanguage === 'en') ? ingredient.unit_en : ingredient.unit_nl;
+            let name = (displayLanguage === 'en') ? ingredient.name_en : ingredient.name_nl;
 
             // Adjust quantity based on servings
             if (currentServings !== originalServings) {
@@ -37,14 +33,31 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Convert units if requested (replicate PHP logic in JS)
             if (currentUnitSystem !== 'original') {
-                const converted = convertUnitJs(quantity, ingredient.original_unit, currentUnitSystem);
+                const converted = convertUnitJs(quantity, (displayLanguage === 'en') ? ingredient.unit_en : ingredient.unit_nl, currentUnitSystem);
                 quantity = converted.quantity;
                 unit = converted.unit;
             }
 
-            updatedHtml += `<li>${quantity.toFixed(2)} ${unit} ${ingredient.name}</li>`;
+            updatedHtml += `<li>${quantity.toFixed(2)} ${unit} ${name}</li>`;
         });
         ingredientsList.innerHTML = updatedHtml;
+    }
+
+    function updateSteps() {
+        const displayLanguage = displayLanguageInput.value;
+        const stepsList = document.querySelector('#steps-list'); // Assuming you add an ID to your <ol> for steps
+        const originalSteps = recipeData.steps; // Assuming steps are passed in recipeData
+
+        let updatedHtml = '';
+        if (originalSteps) {
+            originalSteps.forEach(step => {
+                let description = (displayLanguage === 'en') ? step.description_en : step.description_nl;
+                updatedHtml += `<li>${description} (${step.time_in_minutes} minutes)</li>`;
+            });
+        }
+        if (stepsList) {
+            stepsList.innerHTML = updatedHtml;
+        }
     }
 
     // JavaScript equivalent of PHP's convertUnit function
@@ -89,7 +102,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Event Listeners
-    servingsInput.addEventListener('input', updateIngredients);
+    servingsInput.addEventListener('input', function() {
+        updateIngredients();
+        updateSteps();
+    });
 
     unitButtons.forEach(button => {
         button.addEventListener('click', function() {
@@ -97,6 +113,7 @@ document.addEventListener('DOMContentLoaded', function() {
             this.classList.add('active');
             unitSystemInput.value = this.dataset.unit;
             updateIngredients();
+            updateSteps();
         });
     });
 
@@ -115,7 +132,7 @@ document.addEventListener('DOMContentLoaded', function() {
             } else if (this.dataset.lang === 'en') {
                 unitSystemInput.value = 'imperial';
             } else {
-                unitSystemInput.value = originalUnitSystem; // Fallback to original if neither NL nor EN
+                unitSystemInput.value = 'metric'; // Fallback to metric if neither NL nor EN
             }
             // Update active unit button
             unitButtons.forEach(btn => {
@@ -126,9 +143,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
             updateIngredients();
+            updateSteps();
+            // Update recipe name display
+            document.getElementById('recipe-name-nl').style.display = (displayLanguageInput.value === 'nl') ? 'inline' : 'none';
+            document.getElementById('recipe-name-en').style.display = (displayLanguageInput.value === 'en') ? 'inline' : 'none';
         });
     });
 
     // Initial update on page load
     updateIngredients();
+    updateSteps();
+
+    // Initial display of recipe name based on default language
+    document.getElementById('recipe-name-nl').style.display = (displayLanguageInput.value === 'nl') ? 'inline' : 'none';
+    document.getElementById('recipe-name-en').style.display = (displayLanguageInput.value === 'en') ? 'inline' : 'none';
 });

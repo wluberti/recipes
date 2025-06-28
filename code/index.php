@@ -2,10 +2,6 @@
 
 require 'vendor/autoload.php';
 
-// Load environment variables from .env file
-$dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
-$dotenv->load();
-
 use OpenAI\OpenAI;
 use Symfony\Component\BrowserKit\HttpBrowser;
 use Symfony\Component\HttpClient\HttpClient;
@@ -158,10 +154,9 @@ function fetchAndParseRecipe($url, $debug) {
 function interpretRecipeWithOpenAI($recipeText, $openAIClient, $debug) {
     try {
         $response = $openAIClient->chat()->create([
-            // 'model' => 'gpt-4',
             'model' => 'gpt-3.5-turbo',
             'messages' => [
-                ['role' => 'system', 'content' => 'You are a helpful assistant that extracts recipe information. Extract the recipe name, servings, a list of ingredients with quantity and unit, the cooking steps with timings, and the *actual* URL for an image of the dish from the provided text. For each ingredient, provide the quantity as a number (decimal if necessary) and the unit as a string (e.g., "grams", "cups", "teaspoons", "ml", "pieces"). If a unit is not explicitly stated, infer the most common unit for that ingredient. If a quantity is not specified, infer a reasonable amount (e.g., 1 for a pinch of salt). For each cooking step, provide a description and an estimated time in minutes. Format the output as a JSON object with the following keys: "name" (string), "servings" (integer), "ingredients" (an array of objects, each with "name" (string), "quantity" (float), "unit" (string)), "steps" (an array of objects, each with "description" (string) and "time" (integer)), and "image_url" (string). If no image URL is found, return an empty string for "image_url".'],
+                ['role' => 'system', 'content' => 'You are a helpful assistant that extracts recipe information. Extract the recipe name, servings, a list of ingredients with quantity and unit, the cooking steps with timings, and the *actual* URL for an image of the dish from the provided text. Provide all textual information (recipe name, ingredient names, ingredient units, step descriptions) in both Dutch and in English. For each ingredient, provide the quantity as a number (decimal if necessary) and the unit as a string (e.g., "grams", "cups", "teaspoons", "ml", "pieces"). If a unit is not explicitly stated, infer the most common unit for that ingredient. If a quantity is not specified, infer a reasonable amount (e.g., 1 for a pinch of salt). For each cooking step, provide a description and an estimated time in minutes. Format the output as a JSON object with the following keys: "name_nl" (string), "name_en" (string), "servings" (integer), "ingredients" (an array of objects, each with "name_nl" (string), "name_en" (string), "quantity" (float), "unit_nl" (string), "unit_en" (string)), "steps" (an array of objects, each with "description_nl" (string), "description_en" (string) and "time" (integer)), and "image_url" (string). If no image URL is found, return an empty string for "image_url".'],
                 ['role' => 'user', 'content' => $recipeText,],
             ],
         ])->choices[0]->message->content;
@@ -176,7 +171,7 @@ function interpretRecipeWithOpenAI($recipeText, $openAIClient, $debug) {
         if ($debug) error_log("Decoded OpenAI response: " . print_r($decodedResponse, true));
 
         // Validate the structure of the decoded response
-        if (!isset($decodedResponse['name']) || !isset($decodedResponse['servings']) || !isset($decodedResponse['ingredients']) || !is_array($decodedResponse['ingredients'])) {
+        if (!isset($decodedResponse['name_nl']) || !isset($decodedResponse['servings']) || !isset($decodedResponse['ingredients']) || !is_array($decodedResponse['ingredients'])) {
             error_log("OpenAI response missing required keys or ingredients is not an array: " . print_r($decodedResponse, true));
             return null;
         }
@@ -190,7 +185,7 @@ function interpretRecipeWithOpenAI($recipeText, $openAIClient, $debug) {
 }
 
 // Function to save recipe to database
-function saveRecipeToDatabase($pdo, $recipeData, $url, $originalLanguage, $originalUnitSystem, $debug) {
+function saveRecipeToDatabase($pdo, $recipeData, $url, $debug) {
     try {
         $pdo->beginTransaction();
 
@@ -219,9 +214,9 @@ function saveRecipeToDatabase($pdo, $recipeData, $url, $originalLanguage, $origi
         if ($existingRecipe) {
             // Update existing recipe
             $recipeId = $existingRecipe['id'];
-            if ($debug) error_log("Updating recipe ID: " . $recipeId . ", Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
-            $stmt = $pdo->prepare("UPDATE recipes SET name = ?, servings = ?, image_url = ?, original_language = ?, original_unit_system = ? WHERE id = ?");
-            $stmt->execute([$recipeData['name'], $recipeData['servings'], $localImagePath, $originalLanguage, $originalUnitSystem, $recipeId]);
+            if ($debug) error_log("Updating recipe ID: " . $recipeId . ", Name: " . $recipeData['name_nl'] . ", Servings: " . $recipeData['servings']);
+            $stmt = $pdo->prepare("UPDATE recipes SET name_nl = ?, name_en = ?, servings = ?, image_url = ? WHERE id = ?");
+            $stmt->execute([$recipeData['name_nl'], $recipeData['name_en'], $recipeData['servings'], $localImagePath, $recipeId]);
 
             // Delete old ingredients and insert new ones
             $stmt = $pdo->prepare("DELETE FROM ingredients WHERE recipe_id = ?");
@@ -230,22 +225,22 @@ function saveRecipeToDatabase($pdo, $recipeData, $url, $originalLanguage, $origi
             $stmt->execute([$recipeId]);
         } else {
             // Insert new recipe
-            if ($debug) error_log("Inserting new recipe. Name: " . $recipeData['name'] . ", Servings: " . $recipeData['servings']);
-            $stmt = $pdo->prepare("INSERT INTO recipes (url, name, servings, image_url, original_language, original_unit_system) VALUES (?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$url, $recipeData['name'], $recipeData['servings'], $localImagePath, $originalLanguage, $originalUnitSystem]);
+            if ($debug) error_log("Inserting new recipe. Name: " . $recipeData['name_nl'] . ", Servings: " . $recipeData['servings']);
+            $stmt = $pdo->prepare("INSERT INTO recipes (url, name_nl, name_en, servings, image_url) VALUES (?, ?, ?, ?, ?)");
+            $stmt->execute([$url, $recipeData['name_nl'], $recipeData['name_en'], $recipeData['servings'], $localImagePath]);
             $recipeId = $pdo->lastInsertId();
         }
 
         // Insert ingredients
-        $stmt = $pdo->prepare("INSERT INTO ingredients (recipe_id, language, name, quantity, unit, original_unit) VALUES (?, ?, ?, ?, ?, ?)");
+        $stmt = $pdo->prepare("INSERT INTO ingredients (recipe_id, name_nl, name_en, quantity, unit_nl, unit_en) VALUES (?, ?, ?, ?, ?, ?)");
         foreach ($recipeData['ingredients'] as $ingredient) {
-            $stmt->execute([$recipeId, $originalLanguage, $ingredient['name'], $ingredient['quantity'], $ingredient['unit'], $ingredient['unit']]);
+            $stmt->execute([$recipeId, $ingredient['name_nl'], $ingredient['name_en'], $ingredient['quantity'], $ingredient['unit_nl'], $ingredient['unit_en']]);
         }
 
         // Insert steps
-        $stmt = $pdo->prepare("INSERT INTO steps (recipe_id, language, description, time_in_minutes) VALUES (?, ?, ?, ?)");
+        $stmt = $pdo->prepare("INSERT INTO steps (recipe_id, description_nl, description_en, time_in_minutes) VALUES (?, ?, ?, ?)");
         foreach ($recipeData['steps'] as $step) {
-            $stmt->execute([$recipeId, $originalLanguage, $step['description'], $step['time']]);
+            $stmt->execute([$recipeId, $step['description_nl'], $step['description_en'], $step['time']]);
         }
 
         $pdo->commit();
@@ -277,7 +272,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["recipe_url"])) {
                     $recipeData['image_url'] = $extractedImageUrl;
                 }
 
-                if (saveRecipeToDatabase($pdo, $recipeData, $recipeUrl, $parsedRecipe['originalLanguage'], $parsedRecipe['originalUnitSystem'], $debug)) {
+                if (saveRecipeToDatabase($pdo, $recipeData, $recipeUrl, $debug)) {
                     echo "<p>Recipe processed and saved successfully!</p>";
                 } else {
                     echo "<p>Error saving recipe to database.</p>";
@@ -325,7 +320,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["recipe_id"])) {
         <h2>Saved Recipes</h2>
         <div class="recipe-list">
             <?php
-            $stmt = $pdo->query("SELECT id, name, servings FROM recipes ORDER BY created_at DESC");
+            $stmt = $pdo->query("SELECT id, name_nl, servings FROM recipes ORDER BY created_at DESC");
             $recipes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             error_log("Recipes from DB: " . print_r($recipes, true));
@@ -333,7 +328,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["recipe_id"])) {
             if (count($recipes) > 0) {
                 foreach ($recipes as $recipe) {
                     echo "<div class='recipe-item'>";
-                    echo "<h3><a href=\"recipe.php?id=" . htmlspecialchars($recipe['id']) . "\">" . htmlspecialchars($recipe['name'] ?? 'Unknown Recipe') . "</a></h3>";
+                    echo "<h3><a href=\"recipe.php?id=" . htmlspecialchars($recipe['id']) . "\">" . htmlspecialchars($recipe['name_nl'] ?? 'Unknown Recipe') . "</a></h3>";
                     echo "</div>";
                 }
             } else {
