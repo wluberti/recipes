@@ -286,11 +286,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["recipe_id"])) {
 <body>
     <div class="container">
         <h1>Recipe Processor</h1>
-        <form method="post">
+        <form method="post" id="recipe-form">
             <label for="recipe_url">Recipe URL:</label>
             <input type="url" name="recipe_url" id="recipe_url" required>
-            <button type="submit">Process Recipe</button>
+            <button type="submit" id="process-button">Process Recipe</button>
         </form>
+
+        <div id="loading-message" style="display:none; text-align:center; margin-top:20px;">
+            <p>Processing recipe, please wait...</p>
+        </div>
 
         <hr>
 
@@ -314,5 +318,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["recipe_id"])) {
             ?>
         </div>
     </div>
+    <script>
+        document.getElementById('recipe-form').addEventListener('submit', function() {
+            document.getElementById('process-button').disabled = true;
+            document.getElementById('loading-message').style.display = 'block';
+        });
+    </script>
 </body>
 </html>
